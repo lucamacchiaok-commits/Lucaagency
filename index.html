@@ -28,6 +28,7 @@
     }
 
     * { box-sizing: border-box; }
+
     html, body {
       margin: 0;
       padding: 0;
@@ -400,12 +401,6 @@
       border-color: rgba(230,84,84,0.34);
     }
 
-    .toggle-pill.active.maybe {
-      background: rgba(240,203,73,0.16);
-      color: #f5da74;
-      border-color: rgba(240,203,73,0.24);
-    }
-
     .kpi-list {
       display: grid;
       gap: 12px;
@@ -580,12 +575,18 @@
   <script>
     const STORAGE_KEY = 'luca-agency-dashboard-v1';
 
+    function uid() {
+      return Math.random().toString(36).slice(2, 10);
+    }
+
+    function clone(obj) {
+      return JSON.parse(JSON.stringify(obj));
+    }
+
     const CONFIG = {
       companyName: 'Luca Agency',
       googleForms: {
         enabled: false,
-        // Pegá acá la URL real tipo:
-        // https://docs.google.com/forms/d/e/TU_FORM_ID/formResponse
         endpoint: '',
         fields: {
           month: 'entry.1111111111',
@@ -640,32 +641,20 @@
       videos: { label: 'Recuento de videos', desc: 'Producción entregada y pendiente' }
     };
 
-    let state = loadState();
-    const contentEl = document.getElementById('content');
-    const tabListEl = document.getElementById('tabList');
-
-    renderTabs();
-    render();
-    attachGlobalEvents();
-
-    function uid() {
-      return Math.random().toString(36).slice(2, 10);
-    }
-
-    function clone(obj) {
-      return JSON.parse(JSON.stringify(obj));
-    }
-
     function loadState() {
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return clone(DEMO_STATE);
-        const parsed = JSON.parse(raw);
-        return parsed;
+        return JSON.parse(raw);
       } catch {
         return clone(DEMO_STATE);
       }
     }
+
+    let state = loadState();
+
+    const contentEl = document.getElementById('content');
+    const tabListEl = document.getElementById('tabList');
 
     function saveState() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -688,7 +677,7 @@
       Object.entries(TAB_META).forEach(([key, tab]) => {
         const btn = document.createElement('button');
         btn.className = 'tab' + (state.ui.activeTab === key ? ' active' : '');
-        btn.innerHTML = `<strong>${tab.label}</strong><small>${tab.desc}</small>`;
+        btn.innerHTML = '<strong>' + tab.label + '</strong><small>' + tab.desc + '</small>';
         btn.addEventListener('click', () => {
           state.ui.activeTab = key;
           saveState();
@@ -867,18 +856,16 @@
       `).join('');
 
       if (!filtered.length) {
-        body.innerHTML = `<tr><td colspan="9" class="muted">No hay resultados para esa búsqueda.</td></tr>`;
+        body.innerHTML = '<tr><td colspan="9" class="muted">No hay resultados para esa búsqueda.</td></tr>';
       }
     }
 
     function attachLeadEvents() {
       const leadSearch = document.getElementById('leadSearch');
-      const bulkLeadInput = document.getElementById('bulkLeadInput');
       const bulkLeadBtn = document.getElementById('bulkLeadBtn');
       const addSingleLeadBtn = document.getElementById('addSingleLeadBtn');
       const addMonthBtn = document.getElementById('addMonthBtn');
       const newMonthInput = document.getElementById('newMonthInput');
-      const body = document.getElementById('leadTableBody');
 
       leadSearch.addEventListener('input', () => {
         renderLeadRows(state.leads.months[state.ui.activeLeadMonth] || []);
@@ -886,22 +873,46 @@
       });
 
       bulkLeadBtn.addEventListener('click', async () => {
-        const raw = bulkLeadInput.value.trim();
+        const raw = document.getElementById('bulkLeadInput').value.trim();
         if (!raw) return;
+
         const names = raw.split('\n').map(v => v.trim()).filter(Boolean);
         const month = state.ui.activeLeadMonth;
         const items = names.map(name => ({
-          id: uid(), name, replied: 'no', interested: 'no', callBooked: 'no', closed: 'no', objection: '', chatLink: '', reason: ''
+          id: uid(),
+          name,
+          replied: 'no',
+          interested: 'no',
+          callBooked: 'no',
+          closed: 'no',
+          objection: '',
+          chatLink: '',
+          reason: ''
         }));
+
         state.leads.months[month].push(...items);
         saveState();
         render();
-        for (const item of items) await syncLeadToGoogleForms(item, month);
+
+        for (const item of items) {
+          await syncLeadToGoogleForms(item, month);
+        }
       });
 
       addSingleLeadBtn.addEventListener('click', async () => {
         const month = state.ui.activeLeadMonth;
-        const item = { id: uid(), name: '', replied: 'no', interested: 'no', callBooked: 'no', closed: 'no', objection: '', chatLink: '', reason: '' };
+        const item = {
+          id: uid(),
+          name: '',
+          replied: 'no',
+          interested: 'no',
+          callBooked: 'no',
+          closed: 'no',
+          objection: '',
+          chatLink: '',
+          reason: ''
+        };
+
         state.leads.months[month].push(item);
         saveState();
         render();
@@ -923,6 +934,7 @@
 
     function attachLeadEventsRowOnly() {
       const rows = Array.from(document.querySelectorAll('#leadTableBody tr[data-id]'));
+
       rows.forEach(row => {
         const id = row.dataset.id;
         const month = state.ui.activeLeadMonth;
@@ -942,13 +954,16 @@
             const field = btn.dataset.toggle;
             const value = btn.dataset.value;
             item[field] = value;
+
             if (field === 'closed' && value === 'yes') {
-              item.callBooked = item.callBooked === 'yes' ? 'yes' : 'yes';
-              item.replied = item.replied === 'yes' ? 'yes' : 'yes';
+              item.callBooked = 'yes';
+              item.replied = 'yes';
             }
+
             if (field === 'callBooked' && value === 'yes') {
-              item.replied = item.replied === 'yes' ? 'yes' : 'yes';
+              item.replied = 'yes';
             }
+
             saveState();
             render();
           });
@@ -970,7 +985,8 @@
       const stats = getLeadStats(leads);
       document.querySelectorAll('.stat-card').forEach((card, index) => {
         const values = [stats.total, stats.replied, stats.calls, stats.closed];
-        card.querySelector('.stat-value').textContent = values[index];
+        const valueEl = card.querySelector('.stat-value');
+        if (valueEl) valueEl.textContent = values[index];
       });
     }
 
@@ -1037,6 +1053,7 @@
     function renderGenericTablePage({ title, description, key, searchPlaceholder, bulkPlaceholder, columns, summary }) {
       const rows = state[key];
       const statCards = summary.cards.map(card => statCard(card.label, card.value)).join('');
+
       return `
         <section class="section-head">
           <div>
@@ -1109,6 +1126,7 @@
         clients: ['name', 'service', 'monthlyFee', 'status', 'nextDelivery', 'notes'],
         videos: ['client', 'month', 'type', 'quantity', 'delivered', 'status', 'link']
       };
+
       const fields = configMap[key];
       const rows = state[key];
 
@@ -1133,6 +1151,7 @@
 
         Array.from(tbody.querySelectorAll('tr[data-id]')).forEach(row => {
           const item = rows.find(x => x.id === row.dataset.id);
+
           row.querySelectorAll('[data-field]').forEach(input => {
             input.addEventListener('input', (e) => {
               item[e.target.dataset.field] = e.target.value;
@@ -1140,6 +1159,7 @@
               render();
             });
           });
+
           const deleteBtn = row.querySelector('[data-delete]');
           deleteBtn?.addEventListener('click', () => {
             state[key] = state[key].filter(x => x.id !== item.id);
@@ -1150,15 +1170,18 @@
       }
 
       document.getElementById('genericSearch').addEventListener('input', renderRows);
+
       document.getElementById('genericAddRowBtn').addEventListener('click', () => {
         const empty = Object.fromEntries(fields.map(field => [field, '']));
         state[key].push({ id: uid(), ...empty });
         saveState();
         render();
       });
+
       document.getElementById('genericBulkBtn').addEventListener('click', () => {
         const raw = document.getElementById('genericBulkInput').value.trim();
         if (!raw) return;
+
         const lines = raw.split('\n').map(v => v.trim()).filter(Boolean);
         lines.forEach(line => {
           const pieces = line.split('|').map(v => v.trim());
@@ -1168,6 +1191,7 @@
           });
           state[key].push(entry);
         });
+
         saveState();
         render();
       });
@@ -1190,6 +1214,7 @@
       const avg = total ? (rows.reduce((acc, row) => acc + Number(row.score || 0), 0) / total).toFixed(1) : '0.0';
       const reelEditors = rows.filter(x => String(x.style || '').toLowerCase().includes('reel')).length;
       const withPortfolio = rows.filter(x => String(x.portfolio || '').trim()).length;
+
       return {
         cards: [
           { label: 'Editores cargados', value: total },
@@ -1212,6 +1237,7 @@
       const active = rows.filter(x => String(x.status || '').toLowerCase().includes('activo')).length;
       const retainers = rows.filter(x => String(x.monthlyFee || '').trim()).length;
       const services = new Set(rows.map(x => x.service).filter(Boolean)).size;
+
       return {
         cards: [
           { label: 'Clientes totales', value: total },
@@ -1233,7 +1259,10 @@
       const totalRows = rows.length;
       const totalVideos = rows.reduce((acc, row) => acc + Number(row.quantity || 0), 0);
       const delivered = rows.reduce((acc, row) => acc + Number(row.delivered || 0), 0);
-      const shorts = rows.filter(x => String(x.type || '').toLowerCase().includes('short')).reduce((acc, row) => acc + Number(row.quantity || 0), 0);
+      const shorts = rows
+        .filter(x => String(x.type || '').toLowerCase().includes('short'))
+        .reduce((acc, row) => acc + Number(row.quantity || 0), 0);
+
       return {
         cards: [
           { label: 'Registros', value: totalRows },
@@ -1306,6 +1335,13 @@
         .replaceAll('"', '&quot;');
     }
 
+    function normalizeYesNo(val) {
+      if (!val) return 'no';
+      const text = String(val).toLowerCase().trim();
+      if (text === 'si' || text === 'sí' || text === 'yes' || text === 'true' || text === '1') return 'yes';
+      return 'no';
+    }
+
     function exportJSON() {
       const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -1319,11 +1355,11 @@
     function importJSON(event) {
       const file = event.target.files?.[0];
       if (!file) return;
+
       const reader = new FileReader();
       reader.onload = () => {
         try {
-          const parsed = JSON.parse(reader.result);
-          state = parsed;
+          state = JSON.parse(reader.result);
           saveState();
           renderTabs();
           render();
@@ -1331,15 +1367,18 @@
           alert('El JSON no es válido.');
         }
       };
+
       reader.readAsText(file);
       event.target.value = '';
     }
 
     async function syncLeadToGoogleForms(lead, month) {
       if (!CONFIG.googleForms.enabled || !CONFIG.googleForms.endpoint) return;
+
       try {
         const formData = new FormData();
         const fields = CONFIG.googleForms.fields;
+
         formData.append(fields.month, month);
         formData.append(fields.name, lead.name || '');
         formData.append(fields.replied, lead.replied || 'no');
@@ -1357,9 +1396,7 @@
         console.warn('No se pudo enviar a Google Forms:', error);
       }
     }
-  
 
-    // ================= GOOGLE SHEETS IMPORT =================
     async function importFromGoogleSheets() {
       const url = prompt('Pegá el link público CSV de Google Sheets');
       if (!url) return;
@@ -1368,11 +1405,21 @@
         const res = await fetch(url);
         const text = await res.text();
 
-        const rows = text.split('
-').map(r => r.split(','));
-        rows.shift(); // eliminar encabezados
+        const rows = text
+          .split(/\r?\n/)
+          .map(r => r.trim())
+          .filter(Boolean)
+          .map(r => r.split(','));
 
-        const month = state.ui.activeLeadMonth;
+        if (rows.length <= 1) {
+          alert('El CSV no tiene datos.');
+          return;
+        }
+
+        rows.shift();
+
+        const month = state.ui.activeLeadMonth || 'febrero';
+        if (!state.leads.months[month]) state.leads.months[month] = [];
 
         rows.forEach(row => {
           const [name, replied, interested, callBooked, closed, objection] = row;
@@ -1380,12 +1427,12 @@
 
           state.leads.months[month].push({
             id: uid(),
-            name: name.trim(),
+            name: String(name).trim(),
             replied: normalizeYesNo(replied),
             interested: normalizeYesNo(interested),
             callBooked: normalizeYesNo(callBooked),
             closed: normalizeYesNo(closed),
-            objection: objection || '',
+            objection: objection ? String(objection).trim() : '',
             chatLink: '',
             reason: ''
           });
@@ -1393,26 +1440,23 @@
 
         saveState();
         render();
+        alert('Leads importados correctamente.');
       } catch (e) {
-        alert('Error importando el sheet');
+        console.error(e);
+        alert('Error importando el sheet.');
       }
     }
 
-    function normalizeYesNo(val) {
-      if (!val) return 'no';
-      val = val.toLowerCase();
-      if (val.includes('si') || val.includes('yes')) return 'yes';
-      return 'no';
-    }
-
-    // botón extra
     const importBtn = document.createElement('button');
-    importBtn.textContent = 'Importar desde Google Sheets';
-    importBtn.className = 'btn';
-    importBtn.onclick = importFromGoogleSheets;
-
+    importBtn.textContent = 'Importar Google Sheets';
+    importBtn.className = 'btn btn-ghost';
+    importBtn.type = 'button';
+    importBtn.addEventListener('click', importFromGoogleSheets);
     document.querySelector('.top-actions').appendChild(importBtn);
 
+    attachGlobalEvents();
+    renderTabs();
+    render();
   </script>
 </body>
 </html>
