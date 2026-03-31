@@ -3,123 +3,206 @@
 <head>
 <meta charset="UTF-8">
 <title>Luca Agency Dashboard</title>
+
 <style>
-body { font-family: Arial; background:#0f1f1d; color:white; }
-button { margin:5px; padding:10px; border:none; border-radius:10px; cursor:pointer; }
-.top-actions { margin-bottom:20px; }
+body {
+  margin:0;
+  font-family: Arial;
+  background: linear-gradient(135deg,#0b1c1a,#071312);
+  color:white;
+}
+
+header {
+  display:flex;
+  justify-content:space-between;
+  padding:20px;
+}
+
+h1 { margin:0; }
+
+.top-actions button {
+  background:#173c37;
+  color:white;
+  border:none;
+  padding:10px 15px;
+  border-radius:20px;
+  margin-left:10px;
+  cursor:pointer;
+}
+
+.container {
+  display:flex;
+}
+
+.sidebar {
+  width:220px;
+  padding:20px;
+}
+
+.sidebar button {
+  width:100%;
+  margin-bottom:10px;
+  padding:12px;
+  background:#112826;
+  border:none;
+  border-radius:10px;
+  color:white;
+  cursor:pointer;
+}
+
+.sidebar button.active {
+  background:#2f7c74;
+}
+
+.content {
+  flex:1;
+  padding:20px;
+}
+
+.card {
+  background:#112826;
+  padding:20px;
+  border-radius:15px;
+  margin-bottom:15px;
+}
 </style>
+
 </head>
 
 <body>
 
-<h1>Luca Agency Dashboard</h1>
+<header>
+  <h1>Luca Agency Dashboard</h1>
+  <div class="top-actions">
+    <button onclick="exportJSON()">Exportar JSON</button>
+    <button onclick="importJSON()">Importar JSON</button>
+    <button onclick="importFromGoogleSheets()">Importar Sheets</button>
+  </div>
+</header>
 
-<div class="top-actions">
-  <button onclick="exportJSON()">Exportar JSON</button>
-  <button onclick="importJSON()">Importar JSON</button>
-  <button onclick="importFromGoogleSheets()">Importar Google Sheets</button>
+<div class="container">
+  <div class="sidebar" id="tabs"></div>
+  <div class="content" id="content"></div>
 </div>
-
-<h2>Leads</h2>
-<div id="leads"></div>
 
 <script>
 
-// ================== STATE ==================
+// ================= STATE =================
 const state = {
-  leads: {
-    months: {
-      marzo: []
-    }
-  }
+  active: 'leads',
+  leads: []
 };
 
-// ================== UTILS ==================
-function uid() {
-  return Date.now() + Math.random();
-}
+const tabs = ['leads','editores','clientes','recuento'];
 
-function normalizeYesNo(val) {
-  if (!val) return 'no';
-  val = val.toLowerCase();
-  if (val.includes('si') || val.includes('yes')) return 'yes';
-  return 'no';
-}
+// ================= RENDER =================
+function renderTabs() {
+  const t = document.getElementById("tabs");
+  t.innerHTML = "";
 
-// ================== RENDER ==================
-function render() {
-  const container = document.getElementById("leads");
-  container.innerHTML = "";
+  tabs.forEach(tab=>{
+    const btn = document.createElement("button");
+    btn.textContent = tab;
 
-  Object.keys(state.leads.months).forEach(month => {
-    const leads = state.leads.months[month];
+    if(state.active===tab) btn.classList.add("active");
 
-    leads.forEach(l => {
-      const div = document.createElement("div");
-      div.innerHTML = `
-        <p><b>${l.name}</b> - ${l.interested}</p>
-      `;
-      container.appendChild(div);
-    });
+    btn.onclick = ()=>{
+      state.active = tab;
+      render();
+    };
+
+    t.appendChild(btn);
   });
 }
 
-// ================== IMPORT GOOGLE SHEETS ==================
-async function importFromGoogleSheets() {
-  const url = prompt("Pegá el link CSV del Google Sheet");
+function renderContent() {
+  const c = document.getElementById("content");
 
-  if (!url) return;
+  if(state.active==="leads"){
 
-  try {
+    const total = state.leads.length;
+    const interesados = state.leads.filter(l=>l.interested==="yes").length;
+
+    const porcentaje = total ? Math.round((interesados/total)*100) : 0;
+
+    c.innerHTML = `
+      <div class="card">
+        <h2>Leads</h2>
+        <p>Total: ${total}</p>
+        <p>Interesados: ${interesados}</p>
+        <p>Conversión: ${porcentaje}%</p>
+      </div>
+    `;
+
+    state.leads.forEach(l=>{
+      const div = document.createElement("div");
+      div.className="card";
+      div.innerHTML = `<b>${l.name}</b> - ${l.interested}`;
+      c.appendChild(div);
+    });
+  }
+
+  if(state.active==="editores"){
+    c.innerHTML=`<div class="card"><h2>Editores</h2></div>`;
+  }
+
+  if(state.active==="clientes"){
+    c.innerHTML=`<div class="card"><h2>Clientes</h2></div>`;
+  }
+
+  if(state.active==="recuento"){
+    c.innerHTML=`<div class="card"><h2>Recuento</h2></div>`;
+  }
+}
+
+function render(){
+  renderTabs();
+  renderContent();
+}
+
+// ================= GOOGLE SHEETS =================
+async function importFromGoogleSheets(){
+
+  const url = prompt("Pegá link CSV");
+
+  if(!url) return;
+
+  try{
     const res = await fetch(url);
     const text = await res.text();
 
-    const rows = text.split("\n").map(r => r.split(","));
-    rows.shift(); // headers
+    const rows = text.split("\n").map(r=>r.split(","));
+    rows.shift();
 
-    rows.forEach(r => {
-      const name = r[0] || "";
-      const replied = r[1] || "";
-      const interested = r[2] || "";
-      const callBooked = r[3] || "";
-      const closed = r[4] || "";
-
-      state.leads.months.marzo.push({
-        id: uid(),
-        name: name.trim(),
-        replied: normalizeYesNo(replied),
-        interested: normalizeYesNo(interested),
-        callBooked: normalizeYesNo(callBooked),
-        closed: normalizeYesNo(closed),
-        objection: "",
-        chatLink: "",
-        reason: ""
+    rows.forEach(r=>{
+      state.leads.push({
+        name: r[0] || "",
+        interested: (r[2] || "").toLowerCase().includes("si") ? "yes":"no"
       });
     });
 
     render();
-    alert("Leads importados");
+    alert("Leads cargados");
 
-  } catch (e) {
-    alert("Error importando");
+  }catch(e){
+    alert("Error con el sheet");
   }
 }
 
-// ================== EXPORT / IMPORT ==================
-function exportJSON() {
-  const dataStr = JSON.stringify(state);
-  const blob = new Blob([dataStr], {type: "application/json"});
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "data.json";
+// ================= EXTRA =================
+function exportJSON(){
+  const blob = new Blob([JSON.stringify(state)],{type:"application/json"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download="data.json";
   a.click();
 }
 
-function importJSON() {
-  alert("Función import JSON (opcional)");
+function importJSON(){
+  alert("Import JSON");
 }
 
-// ================== INIT ==================
+// ================= INIT =================
 render();
 
 </script>
