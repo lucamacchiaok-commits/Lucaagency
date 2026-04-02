@@ -1531,7 +1531,6 @@ html = r'''<!DOCTYPE html>
     const lines = text
       .split(/\r?\n/)
       .map(v => v.trim())
-      .filter(Boolean);
 
     if (lines.length <= 1) throw new Error('No hay datos');
 
