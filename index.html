@@ -1,10 +1,11 @@
-<!DOCTYPE html>
+from pathlib import Path
+
+html = r'''<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Luca Agency Dashboard</title>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <style>
     :root {
       --bg: #101617;
@@ -123,9 +124,9 @@
       background: transparent;
     }
 
-    .btn-warning {
-      background: linear-gradient(135deg, #cba73a, #80610c);
-      border-color: rgba(240,203,73,0.35);
+    .btn-sheet {
+      background: linear-gradient(135deg, rgba(96,170,133,0.25), rgba(12,61,55,0.95));
+      border-color: rgba(149,206,174,0.45);
     }
 
     .layout {
@@ -334,7 +335,7 @@
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 1080px;
+      min-width: 980px;
     }
 
     th, td {
@@ -505,13 +506,14 @@
       margin-top: 10px;
     }
 
-    .hidden { display: none !important; }
-
-    .ocr-status {
-      margin-top: 8px;
+    .status-note {
+      margin-top: 10px;
       color: var(--muted);
       font-size: 12px;
+      line-height: 1.5;
     }
+
+    .hidden { display: none !important; }
 
     @media (max-width: 1180px) {
       .layout,
@@ -551,17 +553,11 @@
 
       <div class="top-actions">
         <button class="btn btn-ghost" id="exportBtn">Exportar JSON</button>
-
         <label class="btn btn-ghost" for="importInput" style="cursor:pointer;">
           Importar JSON
         </label>
         <input id="importInput" type="file" accept="application/json" class="hidden" />
-
-        <label class="btn btn-warning" for="imageImportInput" style="cursor:pointer;">
-          Cargar imagen
-        </label>
-        <input id="imageImportInput" type="file" accept="image/*" class="hidden" />
-
+        <button class="btn btn-sheet" id="importSheetBtn" type="button">Importar Google Sheets</button>
         <button class="btn btn-primary" id="resetDemoBtn">Restaurar demo</button>
       </div>
     </div>
@@ -581,17 +577,17 @@
         </div>
 
         <div class="sidebar-card">
-          <h4>OCR por imagen</h4>
+          <h4>Importación desde Sheets</h4>
           <p>
-            Podés subir capturas de Instagram o planillas. Si detecta nombres y estados, actualiza etiquetas. Si detecta solo nombres tipo Instagram, los agrega con estados en no.
+            Pegás el link del Google Sheet o el link CSV. Si el nombre ya existe, se actualizan sus etiquetas. Si no existe, se crea. No duplica registros.
           </p>
-          <div class="ocr-status" id="ocrStatus">Esperando imagen...</div>
+          <div class="status-note" id="sheetStatus">Esperando importación...</div>
         </div>
 
         <div class="sidebar-card">
           <h4>Tip importante</h4>
           <p>
-            Si querés usarlo en distintos dispositivos, te conviene conectarlo después con Google Sheets + Apps Script o Supabase. En GitHub Pages, sin backend, el guardado por defecto es local en el navegador.
+            Para que funcione bien, publicá el Google Sheet o usá un link accesible. Si el sheet no es público, el navegador no lo va a poder leer.
           </p>
         </div>
       </aside>
@@ -684,7 +680,11 @@
 
     const contentEl = document.getElementById('content');
     const tabListEl = document.getElementById('tabList');
-    const ocrStatusEl = document.getElementById('ocrStatus');
+    const sheetStatusEl = document.getElementById('sheetStatus');
+
+    function setSheetStatus(text) {
+      if (sheetStatusEl) sheetStatusEl.textContent = text;
+    }
 
     function saveState() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -693,19 +693,15 @@
     function attachGlobalEvents() {
       document.getElementById('exportBtn').addEventListener('click', exportJSON);
       document.getElementById('importInput').addEventListener('change', importJSON);
-      document.getElementById('imageImportInput').addEventListener('change', importLeadImage);
+      document.getElementById('importSheetBtn').addEventListener('click', importFromSheet);
       document.getElementById('resetDemoBtn').addEventListener('click', () => {
         if (!confirm('Esto va a reemplazar todo con la versión demo.')) return;
         state = clone(DEMO_STATE);
         saveState();
         renderTabs();
         render();
-        setOCRStatus('Esperando imagen...');
+        setSheetStatus('Esperando importación...');
       });
-    }
-
-    function setOCRStatus(text) {
-      if (ocrStatusEl) ocrStatusEl.textContent = text;
     }
 
     function renderTabs() {
@@ -1372,54 +1368,23 @@
     }
 
     function normalizeYesNo(val) {
-      if (val == null) return 'no';
+      if (!val) return 'no';
       const text = String(val).toLowerCase().trim();
       if (
         text === 'si' || text === 'sí' || text === 'yes' || text === 'true' || text === '1' ||
-        text.includes('contesto si') || text.includes('intereso si') || text.includes('agendo si') || text.includes('cerro si')
+        text === 'x' || text === 'ok'
       ) return 'yes';
       return 'no';
     }
 
-    function simplifyName(str) {
-      return String(str || '')
+    function normalizeLeadName(name) {
+      return String(name || '')
         .toLowerCase()
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9@._\s-]/g, '')
+        .replace(/^@+/, '')
         .replace(/\s+/g, ' ')
         .trim();
-    }
-
-    function normalizeHandleLike(str) {
-      return simplifyName(str).replace(/^@+/, '');
-    }
-
-    function allLeadsFlat() {
-      const out = [];
-      Object.entries(state.leads.months).forEach(([month, arr]) => {
-        arr.forEach(item => out.push({ month, item }));
-      });
-      return out;
-    }
-
-    function findExistingLeadByName(name) {
-      const target = normalizeHandleLike(name);
-      if (!target) return null;
-
-      const all = allLeadsFlat();
-
-      for (const row of all) {
-        const base = normalizeHandleLike(row.item.name);
-        if (base === target) return row;
-      }
-
-      for (const row of all) {
-        const base = normalizeHandleLike(row.item.name);
-        if (base.includes(target) || target.includes(base)) return row;
-      }
-
-      return null;
     }
 
     function exportJSON() {
@@ -1443,6 +1408,7 @@
           saveState();
           renderTabs();
           render();
+          setSheetStatus('JSON importado correctamente.');
         } catch {
           alert('El JSON no es válido.');
         }
@@ -1477,297 +1443,204 @@
       }
     }
 
-    async function importLeadImage(event) {
-      const file = event.target.files?.[0];
-      if (!file) return;
+    function getAllLeadRows() {
+      const rows = [];
+      Object.entries(state.leads.months).forEach(([month, items]) => {
+        items.forEach(item => rows.push({ month, item }));
+      });
+      return rows;
+    }
 
-      try {
-        setOCRStatus('Leyendo imagen...');
-        const result = await Tesseract.recognize(file, 'spa+eng');
-        const text = result.data.text || '';
-        setOCRStatus('Analizando texto detectado...');
+    function findExistingLeadByName(name) {
+      const normalized = normalizeLeadName(name);
+      const rows = getAllLeadRows();
 
-        const parsedRows = parseOCRTextToLeadRows(text);
+      for (const row of rows) {
+        if (normalizeLeadName(row.item.name) === normalized) return row;
+      }
 
-        if (!parsedRows.length) {
-          setOCRStatus('No encontré filas útiles.');
-          alert('No se encontraron nombres o filas útiles en la imagen.');
-          event.target.value = '';
-          return;
+      for (const row of rows) {
+        const current = normalizeLeadName(row.item.name);
+        if (current.includes(normalized) || normalized.includes(current)) return row;
+      }
+
+      return null;
+    }
+
+    function parseCSVLine(line) {
+      const result = [];
+      let current = '';
+      let inQuotes = false;
+
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        const next = line[i + 1];
+
+        if (char === '"' && inQuotes && next === '"') {
+          current += '"';
+          i++;
+          continue;
         }
 
-        const activeMonth = state.ui.activeLeadMonth || 'febrero';
-        if (!state.leads.months[activeMonth]) state.leads.months[activeMonth] = [];
+        if (char === '"') {
+          inQuotes = !inQuotes;
+          continue;
+        }
+
+        if (char === ',' && !inQuotes) {
+          result.push(current);
+          current = '';
+          continue;
+        }
+
+        current += char;
+      }
+
+      result.push(current);
+      return result.map(v => v.trim());
+    }
+
+    function findHeaderIndex(headers, variants) {
+      return headers.findIndex(h => variants.some(v => h.includes(v)));
+    }
+
+    async function importFromSheet() {
+      let url = prompt('Pegá el link del Google Sheet o el link CSV');
+      if (!url) return;
+
+      try {
+        setSheetStatus('Leyendo Google Sheet...');
+        url = url.trim();
+
+        if (url.includes('docs.google.com/spreadsheets/d/')) {
+          const idMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+          if (!idMatch) throw new Error('No se pudo leer el ID del sheet');
+
+          const sheetId = idMatch[1];
+          const gidMatch = url.match(/[?&#]gid=([0-9]+)/);
+          const gid = gidMatch ? gidMatch[1] : '0';
+
+          url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+        }
+
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('No se pudo descargar el CSV');
+
+        const text = await res.text();
+
+        if (text.trim().startsWith('<!DOCTYPE html') || text.trim().startsWith('<html')) {
+          throw new Error('Google devolvió HTML en lugar de CSV. El sheet probablemente no es público.');
+        }
+
+        const lines = text
+          .split(/\r?\n/)
+          .map(v => v.trim())
+          .filter(Boolean);
+
+        if (lines.length <= 1) {
+          throw new Error('El sheet no tiene filas útiles.');
+        }
+
+        const headers = parseCSVLine(lines[0]).map(h =>
+          h
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .trim()
+        );
+
+        const idx = {
+          name: findHeaderIndex(headers, ['nombre', 'name', 'lead', 'usuario', 'user']),
+          replied: findHeaderIndex(headers, ['contesto', 'respondio', 'respondio?', 'respondio ?', 'reply', 'replyed', 'respuesta']),
+          interested: findHeaderIndex(headers, ['intereso', 'le intereso', 'interested', 'interes']),
+          call: findHeaderIndex(headers, ['agendamos llamada', 'llamada', 'call', 'agendo', 'meeting']),
+          closed: findHeaderIndex(headers, ['cerramos', 'cerro', 'closed', 'close', 'cierre']),
+          objection: findHeaderIndex(headers, ['objecion', 'objection', 'motivo', 'reason'])
+        };
+
+        if (idx.name === -1) {
+          throw new Error('No encontré la columna de nombre.');
+        }
+
+        const month = state.ui.activeLeadMonth || 'febrero';
+        if (!state.leads.months[month]) state.leads.months[month] = [];
 
         let added = 0;
         let updated = 0;
         let skipped = 0;
 
-        parsedRows.forEach(parsed => {
-          const existing = findExistingLeadByName(parsed.name);
+        for (const line of lines.slice(1)) {
+          const row = parseCSVLine(line);
+          const rawName = row[idx.name];
+          const name = String(rawName || '').trim();
+
+          if (!name) {
+            skipped++;
+            continue;
+          }
+
+          const newData = {
+            replied: idx.replied !== -1 ? normalizeYesNo(row[idx.replied]) : 'no',
+            interested: idx.interested !== -1 ? normalizeYesNo(row[idx.interested]) : 'no',
+            callBooked: idx.call !== -1 ? normalizeYesNo(row[idx.call]) : 'no',
+            closed: idx.closed !== -1 ? normalizeYesNo(row[idx.closed]) : 'no',
+            objection: idx.objection !== -1 ? String(row[idx.objection] || '').trim() : ''
+          };
+
+          const existing = findExistingLeadByName(name);
 
           if (existing) {
-            const lead = existing.item;
+            existing.item.replied = newData.replied;
+            existing.item.interested = newData.interested;
+            existing.item.callBooked = newData.callBooked;
+            existing.item.closed = newData.closed;
+            if (newData.objection) existing.item.objection = newData.objection;
 
-            if (parsed.replied !== null) lead.replied = parsed.replied;
-            if (parsed.interested !== null) lead.interested = parsed.interested;
-            if (parsed.callBooked !== null) lead.callBooked = parsed.callBooked;
-            if (parsed.closed !== null) lead.closed = parsed.closed;
-            if (parsed.objection) lead.objection = parsed.objection;
-
-            if (lead.closed === 'yes') {
-              lead.callBooked = 'yes';
-              lead.replied = 'yes';
+            if (existing.item.closed === 'yes') {
+              existing.item.callBooked = 'yes';
+              existing.item.replied = 'yes';
             }
-            if (lead.callBooked === 'yes') {
-              lead.replied = 'yes';
+            if (existing.item.callBooked === 'yes') {
+              existing.item.replied = 'yes';
             }
 
             updated++;
-            return;
+          } else {
+            state.leads.months[month].push({
+              id: uid(),
+              name,
+              replied: newData.replied,
+              interested: newData.interested,
+              callBooked: newData.callBooked,
+              closed: newData.closed,
+              objection: newData.objection,
+              chatLink: '',
+              reason: ''
+            });
+            added++;
           }
-
-          // Si no existe:
-          // - si viene de IG solo con nombre, lo agregamos
-          // - si viene de tabla con etiquetas, lo agregamos
-          // - si no tiene nada útil, lo salteamos
-          const hasAnyTag =
-            parsed.replied !== null ||
-            parsed.interested !== null ||
-            parsed.callBooked !== null ||
-            parsed.closed !== null ||
-            !!parsed.objection;
-
-          if (!parsed.fromInstagramOnly && !hasAnyTag) {
-            skipped++;
-            return;
-          }
-
-          state.leads.months[activeMonth].push({
-            id: uid(),
-            name: parsed.name,
-            replied: parsed.replied ?? 'no',
-            interested: parsed.interested ?? 'no',
-            callBooked: parsed.callBooked ?? 'no',
-            closed: parsed.closed ?? 'no',
-            objection: parsed.objection || '',
-            chatLink: '',
-            reason: ''
-          });
-
-          added++;
-        });
+        }
 
         saveState();
         render();
-        setOCRStatus(`Listo. Agregados: ${added} · Actualizados: ${updated} · Omitidos: ${skipped}`);
-        alert(`Imagen procesada.\nAgregados: ${added}\nActualizados: ${updated}\nOmitidos: ${skipped}`);
-      } catch (err) {
-        console.error(err);
-        setOCRStatus('Error procesando la imagen.');
-        alert('Error procesando la imagen.');
+        setSheetStatus(`Listo. Agregados: ${added} · Actualizados: ${updated} · Omitidos: ${skipped}`);
+        alert(`Importación completa.\nAgregados: ${added}\nActualizados: ${updated}\nOmitidos: ${skipped}`);
+      } catch (error) {
+        console.error(error);
+        setSheetStatus('Error importando el sheet.');
+        alert('Error importando el Google Sheet. Revisá que el link sea público y que exista una columna de nombre.');
       }
-
-      event.target.value = '';
-    }
-
-    function parseOCRTextToLeadRows(text) {
-      const rawLines = String(text || '')
-        .split(/\r?\n/)
-        .map(line => line.trim())
-        .filter(Boolean);
-
-      const lines = rawLines
-        .map(line => line.replace(/\s+/g, ' ').trim())
-        .filter(line => line.length >= 2);
-
-      const results = [];
-
-      for (const line of lines) {
-        const lowered = simplifyName(line);
-
-        if (isHeaderLine(lowered)) continue;
-        if (looksLikeNoise(lowered)) continue;
-
-        const tableParsed = parseTableLikeLine(line);
-        if (tableParsed) {
-          results.push(tableParsed);
-          continue;
-        }
-
-        const igParsed = parseInstagramLikeLine(line);
-        if (igParsed) {
-          results.push(igParsed);
-        }
-      }
-
-      return dedupeParsedRows(results);
-    }
-
-    function isHeaderLine(line) {
-      return (
-        line.includes('nombre') ||
-        line.includes('contesto') ||
-        line.includes('respondio') ||
-        line.includes('le intereso') ||
-        line.includes('intereso') ||
-        line.includes('agendamos') ||
-        line.includes('llamada') ||
-        line.includes('cerramos') ||
-        line.includes('objecion') ||
-        line.includes('link del chat') ||
-        line.includes('por que no') ||
-        line.includes('estadisticas') ||
-        line.includes('cantidad de') ||
-        line.includes('porcentaje')
-      );
-    }
-
-    function looksLikeNoise(line) {
-      if (!line) return true;
-      if (line.length < 3) return true;
-      if (/^[0-9\s.%,-]+$/.test(line)) return true;
-      return false;
-    }
-
-    function parseStatusToken(token) {
-      const t = simplifyName(token);
-
-      if (!t) return null;
-      if (t === 'si' || t === 'sí' || t === 'yes' || t === 'y' || t === '1' || t === 'true') return 'yes';
-      if (t === 'no' || t === 'n' || t === '0' || t === 'false') return 'no';
-
-      return null;
-    }
-
-    function parseTableLikeLine(line) {
-      const tokens = line
-        .replace(/\|/g, ' ')
-        .replace(/\t/g, ' ')
-        .split(/\s+/)
-        .filter(Boolean);
-
-      if (tokens.length < 2) return null;
-
-      let firstStatusIndex = -1;
-      for (let i = 0; i < tokens.length; i++) {
-        if (parseStatusToken(tokens[i]) !== null) {
-          firstStatusIndex = i;
-          break;
-        }
-      }
-
-      if (firstStatusIndex === -1) return null;
-      if (firstStatusIndex === 0) return null;
-
-      const name = tokens.slice(0, firstStatusIndex).join(' ').trim();
-      if (!isReasonableName(name)) return null;
-
-      const statusTokens = tokens.slice(firstStatusIndex);
-      const statuses = statusTokens.map(parseStatusToken).filter(v => v !== null);
-
-      if (!statuses.length) return null;
-
-      const replied = statuses[0] ?? null;
-      const interested = statuses[1] ?? null;
-      const callBooked = statuses[2] ?? null;
-      const closed = statuses[3] ?? null;
-
-      let objection = '';
-      if (statusTokens.length > statuses.length) {
-        objection = statusTokens.slice(statuses.length).join(' ').trim();
-      }
-
-      return {
-        name: cleanLeadName(name),
-        replied,
-        interested,
-        callBooked,
-        closed,
-        objection,
-        fromInstagramOnly: false
-      };
-    }
-
-    function parseInstagramLikeLine(line) {
-      const clean = line.trim();
-
-      // si parece handle o nombre corto sin columnas, lo tomamos como Instagram
-      const maybeHandle = clean.replace(/^@+/, '');
-      if (!isReasonableName(maybeHandle)) return null;
-
-      const lowered = simplifyName(clean);
-
-      // si contiene sí/no o texto de tabla, no entra por acá
-      if (
-        lowered.includes(' si ') ||
-        lowered.includes(' no ') ||
-        lowered.startsWith('si ') ||
-        lowered.startsWith('no ')
-      ) return null;
-
-      // líneas típicas de IG: handle, nombre corto
-      if (
-        clean.startsWith('@') ||
-        /^[A-Za-z0-9._-]{3,}$/.test(clean) ||
-        /^[A-Za-zÀ-ÿ0-9._ -]{3,30}$/.test(clean)
-      ) {
-        return {
-          name: cleanLeadName(maybeHandle),
-          replied: null,
-          interested: null,
-          callBooked: null,
-          closed: null,
-          objection: '',
-          fromInstagramOnly: true
-        };
-      }
-
-      return null;
-    }
-
-    function isReasonableName(name) {
-      const clean = String(name || '').trim();
-      if (clean.length < 3) return false;
-      if (/^[0-9._-]+$/.test(clean)) return false;
-      return true;
-    }
-
-    function cleanLeadName(name) {
-      return String(name || '')
-        .replace(/^@+/, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-    }
-
-    function dedupeParsedRows(rows) {
-      const map = new Map();
-
-      rows.forEach(row => {
-        const key = normalizeHandleLike(row.name);
-        if (!key) return;
-
-        if (!map.has(key)) {
-          map.set(key, { ...row });
-          return;
-        }
-
-        const existing = map.get(key);
-        if (row.replied !== null) existing.replied = row.replied;
-        if (row.interested !== null) existing.interested = row.interested;
-        if (row.callBooked !== null) existing.callBooked = row.callBooked;
-        if (row.closed !== null) existing.closed = row.closed;
-        if (row.objection) existing.objection = row.objection;
-        existing.fromInstagramOnly = existing.fromInstagramOnly && row.fromInstagramOnly;
-      });
-
-      return Array.from(map.values());
     }
 
     attachGlobalEvents();
     renderTabs();
     render();
-    setOCRStatus('Esperando imagen...');
+    setSheetStatus('Esperando importación...');
   </script>
 </body>
 </html>
+'''
+
+path = Path('/mnt/data/luca_agency_dashboard_completo.html')
+path.write_text(html, encoding='utf-8')
+print(f"Archivo creado: {path}")
