@@ -1459,11 +1459,6 @@ html = r'''<!DOCTYPE html>
         if (normalizeLeadName(row.item.name) === normalized) return row;
       }
 
-      for (const row of rows) {
-        const current = normalizeLeadName(row.item.name);
-        if (current.includes(normalized) || normalized.includes(current)) return row;
-      }
-
       return null;
     }
 
