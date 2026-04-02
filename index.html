@@ -1504,133 +1504,123 @@ html = r'''<!DOCTYPE html>
       return headers.findIndex(h => variants.some(v => h.includes(v)));
     }
 
-    async function importFromSheet() {
-      let url = prompt('Pegá el link del Google Sheet o el link CSV');
-      if (!url) return;
+  async function importFromSheet() {
+  let url = prompt('Pegá el link del Google Sheet o CSV');
+  if (!url) return;
 
-      try {
-        setSheetStatus('Leyendo Google Sheet...');
-        url = url.trim();
+  try {
+    setSheetStatus('Leyendo Google Sheet...');
+    url = url.trim();
 
-        if (url.includes('docs.google.com/spreadsheets/d/')) {
-          const idMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-          if (!idMatch) throw new Error('No se pudo leer el ID del sheet');
+    if (url.includes('docs.google.com/spreadsheets/d/')) {
+      const idMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+      if (!idMatch) throw new Error('No se pudo leer el ID');
 
-          const sheetId = idMatch[1];
-          const gidMatch = url.match(/[?&#]gid=([0-9]+)/);
-          const gid = gidMatch ? gidMatch[1] : '0';
+      const sheetId = idMatch[1];
+      const gidMatch = url.match(/[?&#]gid=([0-9]+)/);
+      const gid = gidMatch ? gidMatch[1] : '0';
 
-          url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+      url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+    }
+
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Error descargando CSV');
+
+    const text = await res.text();
+
+    const lines = text
+      .split(/\r?\n/)
+      .map(v => v.trim())
+      .filter(Boolean);
+
+    if (lines.length <= 1) throw new Error('No hay datos');
+
+    const headers = parseCSVLine(lines[0]).map(h =>
+      h.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    );
+
+    const idx = {
+      name: findHeaderIndex(headers, ['nombre', 'name']),
+      replied: findHeaderIndex(headers, ['contesto', 'respondio']),
+      interested: findHeaderIndex(headers, ['intereso']),
+      call: findHeaderIndex(headers, ['llamada', 'agendo']),
+      closed: findHeaderIndex(headers, ['cerro', 'cerramos']),
+      objection: findHeaderIndex(headers, ['objecion', 'motivo'])
+    };
+
+    if (idx.name === -1) throw new Error('Falta columna nombre');
+
+    // 🔥 CONFIG QUE VOS PEDISTE
+    const START = 4;
+    const END = 398;
+    const month = 'febrero';
+
+    if (!state.leads.months[month]) {
+      state.leads.months[month] = [];
+    }
+
+    let added = 0;
+    let updated = 0;
+
+    for (let i = START - 1; i < END; i++) {
+      const row = parseCSVLine(lines[i] || '');
+
+      const name = String(row[idx.name] || '').trim();
+      if (!name) continue;
+
+      const data = {
+        replied: idx.replied !== -1 ? normalizeYesNo(row[idx.replied]) : 'no',
+        interested: idx.interested !== -1 ? normalizeYesNo(row[idx.interested]) : 'no',
+        callBooked: idx.call !== -1 ? normalizeYesNo(row[idx.call]) : 'no',
+        closed: idx.closed !== -1 ? normalizeYesNo(row[idx.closed]) : 'no',
+        objection: idx.objection !== -1 ? String(row[idx.objection] || '') : ''
+      };
+
+      const existing = findExistingLeadByName(name);
+
+      if (existing) {
+        existing.item.replied = data.replied;
+        existing.item.interested = data.interested;
+        existing.item.callBooked = data.callBooked;
+        existing.item.closed = data.closed;
+
+        if (data.objection) existing.item.objection = data.objection;
+
+        if (existing.item.closed === 'yes') {
+          existing.item.callBooked = 'yes';
+          existing.item.replied = 'yes';
         }
 
-        const res = await fetch(url);
-        if (!res.ok) throw new Error('No se pudo descargar el CSV');
+        updated++;
+      } else {
+        state.leads.months[month].push({
+          id: uid(),
+          name,
+          replied: data.replied,
+          interested: data.interested,
+          callBooked: data.callBooked,
+          closed: data.closed,
+          objection: data.objection,
+          chatLink: '',
+          reason: ''
+        });
 
-        const text = await res.text();
-
-        if (text.trim().startsWith('<!DOCTYPE html') || text.trim().startsWith('<html')) {
-          throw new Error('Google devolvió HTML en lugar de CSV. El sheet probablemente no es público.');
-        }
-
-        const lines = text
-          .split(/\r?\n/)
-          .map(v => v.trim())
-          .filter(Boolean);
-
-        if (lines.length <= 1) {
-          throw new Error('El sheet no tiene filas útiles.');
-        }
-
-        const headers = parseCSVLine(lines[0]).map(h =>
-          h
-            .toLowerCase()
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .trim()
-        );
-
-        const idx = {
-          name: findHeaderIndex(headers, ['nombre', 'name', 'lead', 'usuario', 'user']),
-          replied: findHeaderIndex(headers, ['contesto', 'respondio', 'respondio?', 'respondio ?', 'reply', 'replyed', 'respuesta']),
-          interested: findHeaderIndex(headers, ['intereso', 'le intereso', 'interested', 'interes']),
-          call: findHeaderIndex(headers, ['agendamos llamada', 'llamada', 'call', 'agendo', 'meeting']),
-          closed: findHeaderIndex(headers, ['cerramos', 'cerro', 'closed', 'close', 'cierre']),
-          objection: findHeaderIndex(headers, ['objecion', 'objection', 'motivo', 'reason'])
-        };
-
-        if (idx.name === -1) {
-          throw new Error('No encontré la columna de nombre.');
-        }
-
-        const month = state.ui.activeLeadMonth || 'febrero';
-        if (!state.leads.months[month]) state.leads.months[month] = [];
-
-        let added = 0;
-        let updated = 0;
-        let skipped = 0;
-
-        for (const line of lines.slice(1)) {
-          const row = parseCSVLine(line);
-          const rawName = row[idx.name];
-          const name = String(rawName || '').trim();
-
-          if (!name) {
-            skipped++;
-            continue;
-          }
-
-          const newData = {
-            replied: idx.replied !== -1 ? normalizeYesNo(row[idx.replied]) : 'no',
-            interested: idx.interested !== -1 ? normalizeYesNo(row[idx.interested]) : 'no',
-            callBooked: idx.call !== -1 ? normalizeYesNo(row[idx.call]) : 'no',
-            closed: idx.closed !== -1 ? normalizeYesNo(row[idx.closed]) : 'no',
-            objection: idx.objection !== -1 ? String(row[idx.objection] || '').trim() : ''
-          };
-
-          const existing = findExistingLeadByName(name);
-
-          if (existing) {
-            existing.item.replied = newData.replied;
-            existing.item.interested = newData.interested;
-            existing.item.callBooked = newData.callBooked;
-            existing.item.closed = newData.closed;
-            if (newData.objection) existing.item.objection = newData.objection;
-
-            if (existing.item.closed === 'yes') {
-              existing.item.callBooked = 'yes';
-              existing.item.replied = 'yes';
-            }
-            if (existing.item.callBooked === 'yes') {
-              existing.item.replied = 'yes';
-            }
-
-            updated++;
-          } else {
-            state.leads.months[month].push({
-              id: uid(),
-              name,
-              replied: newData.replied,
-              interested: newData.interested,
-              callBooked: newData.callBooked,
-              closed: newData.closed,
-              objection: newData.objection,
-              chatLink: '',
-              reason: ''
-            });
-            added++;
-          }
-        }
-
-        saveState();
-        render();
-        setSheetStatus(`Listo. Agregados: ${added} · Actualizados: ${updated} · Omitidos: ${skipped}`);
-        alert(`Importación completa.\nAgregados: ${added}\nActualizados: ${updated}\nOmitidos: ${skipped}`);
-      } catch (error) {
-        console.error(error);
-        setSheetStatus('Error importando el sheet.');
-        alert('Error importando el Google Sheet. Revisá que el link sea público y que exista una columna de nombre.');
+        added++;
       }
     }
+
+    saveState();
+    render();
+
+    setSheetStatus(`Febrero importado → ${added} nuevos, ${updated} actualizados`);
+    alert(`Importación lista\nNuevos: ${added}\nActualizados: ${updated}`);
+
+  } catch (err) {
+    console.error(err);
+    setSheetStatus('Error importando');
+    alert('Error al importar el sheet');
+  }
+}
 
     attachGlobalEvents();
     renderTabs();
